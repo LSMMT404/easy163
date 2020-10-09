@@ -28,6 +28,7 @@ public class PlaylistHook extends BaseHook
             "/eapi/album/v3/detail",
             "/discovery/recommend/songs",
             "/eapi/album/privilege",
+            "/eapi/playlist/privilege",
             "/eapi/batch",
             "/artist/privilege",
             "/eapi/artist/top/song",
@@ -87,6 +88,7 @@ public class PlaylistHook extends BaseHook
                 {
                     String songId = object.getString("id");
                     Keyword keyword = new Keyword();
+                    keyword.id = songId;
                     keyword.applyRawSongName(object.getString("name"));
                     for (Object singerObj : object.getJSONArray("ar"))
                     {

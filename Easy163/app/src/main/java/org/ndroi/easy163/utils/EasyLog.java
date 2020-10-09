@@ -1,5 +1,6 @@
 package org.ndroi.easy163.utils;
 
+import android.text.method.ScrollingMovementMethod;
 import android.view.View;
 import android.widget.TextView;
 import java.text.SimpleDateFormat;
@@ -11,19 +12,15 @@ public class EasyLog
 
     public static void log(String info)
     {
-        logger.log(info);
+        if(logger != null)
+        {
+            logger.log(info);
+        }
     }
 
     public static void setTextView(TextView textView)
     {
-        textView.setOnLongClickListener(new View.OnLongClickListener()
-        {
-            @Override
-            public boolean onLongClick(View v)
-            {
-                return true;
-            }
-        });
+        textView.setMovementMethod(ScrollingMovementMethod.getInstance());
         logger = new Logger(textView);
     }
 

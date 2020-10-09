@@ -5,25 +5,26 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
-import android.support.v4.content.LocalBroadcastManager;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+import android.service.quicksettings.TileService;
 import android.util.Log;
 import org.ndroi.easy163.R;
 import org.ndroi.easy163.core.Cache;
+import org.ndroi.easy163.core.Local;
 import org.ndroi.easy163.core.Server;
+import org.ndroi.easy163.ui.EasyTileService;
 import org.ndroi.easy163.ui.MainActivity;
 import org.ndroi.easy163.utils.EasyLog;
 import org.ndroi.easy163.vpn.bio.BioTcpHandler;
 import org.ndroi.easy163.vpn.bio.BioUdpHandler;
-import org.ndroi.easy163.vpn.config.Config;
 import org.ndroi.easy163.vpn.tcpip.Packet;
 import org.ndroi.easy163.vpn.util.ByteBufferPool;
 import java.io.Closeable;
@@ -48,12 +49,17 @@ public class LocalVPNService extends VpnService
     private BlockingQueue<Packet> deviceToNetworkTCPQueue;
     private BlockingQueue<ByteBuffer> networkToDeviceQueue;
     private ExecutorService executorService;
-    private Boolean isRunning = false;
+    private static Boolean isRunning = false;
     private static Context context = null;
 
     public static Context getContext()
     {
         return context;
+    }
+
+    public static Boolean getIsRunning()
+    {
+        return isRunning;
     }
 
     private BroadcastReceiver stopReceiver = new BroadcastReceiver()
@@ -81,7 +87,7 @@ public class LocalVPNService extends VpnService
         super.onCreate();
         context = getApplicationContext();
         setupVPN();
-        LocalBroadcastManager.getInstance(this).registerReceiver(stopReceiver, new IntentFilter("activity"));
+        LocalBroadcastManager.getInstance(this).registerReceiver(stopReceiver, new IntentFilter("control"));
         deviceToNetworkUDPQueue = new ArrayBlockingQueue<Packet>(1000);
         deviceToNetworkTCPQueue = new ArrayBlockingQueue<Packet>(1000);
         networkToDeviceQueue = new ArrayBlockingQueue<>(1000);
@@ -92,10 +98,12 @@ public class LocalVPNService extends VpnService
                 deviceToNetworkUDPQueue, deviceToNetworkTCPQueue, networkToDeviceQueue));
         startNotification();
         Server.getInstance().start();
-        Cache.Init();
+        Cache.init();
+        Local.load();
         isRunning = true;
-        Log.i(TAG, "Easy163 VPN 开始运行");
-        EasyLog.log("Easy163 VPN 开始运行");
+        sendState();
+        TileService.requestListeningState(this, new ComponentName(this, EasyTileService.class));
+        Log.i(TAG, "Easy163 VPN 启动");
     }
 
     private void startNotification()
@@ -108,16 +116,14 @@ public class LocalVPNService extends VpnService
             NotificationChannel channel = new NotificationChannel(notificationId, notificationName, NotificationManager.IMPORTANCE_HIGH);
             notificationManager.createNotificationChannel(channel);
         }
-        Bitmap icon = BitmapFactory.decodeResource(getResources(), R.mipmap.icon);
         Intent intent = new Intent(this, MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent pendingIntent = PendingIntent.getActivity(this, 100, intent, 0);
         Notification.Builder builder = new Notification.Builder(this)
                 .setContentIntent(pendingIntent)
                 .setSmallIcon(R.mipmap.icon)
-                .setLargeIcon(icon)
                 .setContentTitle("Easy163")
-                .setContentText("Easy163 正在运行...");
+                .setContentText("正在运行...");
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
         {
             builder.setChannelId(notificationId);
@@ -165,7 +171,6 @@ public class LocalVPNService extends VpnService
     @Override
     public int onStartCommand(Intent intent, int flags, int startId)
     {
-        sendState();
         return START_STICKY;
     }
 
@@ -176,7 +181,8 @@ public class LocalVPNService extends VpnService
         executorService.shutdownNow();
         cleanup();
         isRunning = false;
-        EasyLog.log("Easy163 VPN 停止运行");
+        sendState();
+        TileService.requestListeningState(this, new ComponentName(this, EasyTileService.class));
         Log.i(TAG, "Stopped");
     }
 
@@ -190,12 +196,13 @@ public class LocalVPNService extends VpnService
 
     private void sendState()
     {
+        MainActivity.resetBroadcastReceivedState();
         Intent replyIntent=  new Intent("service");
         replyIntent.putExtra("isRunning", isRunning);
         LocalBroadcastManager.getInstance(this).sendBroadcast(replyIntent);
+        Log.i(TAG, "sendState");
     }
 
-    // TODO: Move this to a "utils" class for reuse
     private static void closeResources(Closeable... resources)
     {
         for (Closeable resource : resources)
@@ -251,55 +258,34 @@ public class LocalVPNService extends VpnService
                     {
                         ByteBuffer bufferFromNetwork = networkToDeviceQueue.take();
                         bufferFromNetwork.flip();
-
                         while (bufferFromNetwork.hasRemaining())
                         {
                             int w = vpnOutput.write(bufferFromNetwork);
-                            if (w > 0)
-                            {
-                                //MainActivity.downByte.addAndGet(w);
-                            }
-
-                            if (Config.logRW)
-                            {
-                                Log.d(TAG, "vpn write " + w);
-                            }
                         }
                     } catch (Exception e)
                     {
                         Log.i(TAG, "WriteVpnThread fail", e);
                     }
-
                 }
-
             }
         }
 
         @Override
         public void run()
         {
-            //Log.i(TAG, "Started");
-
             FileChannel vpnInput = new FileInputStream(vpnFileDescriptor).getChannel();
             FileChannel vpnOutput = new FileOutputStream(vpnFileDescriptor).getChannel();
             Thread t = new Thread(new WriteVpnThread(vpnOutput, networkToDeviceQueue));
             t.start();
-
             try
             {
-                ByteBuffer bufferToNetwork = null;
-
                 while (!Thread.interrupted())
                 {
-                    bufferToNetwork = ByteBufferPool.acquire();
+                    ByteBuffer bufferToNetwork = ByteBufferPool.acquire();
                     int readBytes = vpnInput.read(bufferToNetwork);
-
-                    //MainActivity.upByte.addAndGet(readBytes);
-
                     if (readBytes > 0)
                     {
                         bufferToNetwork.flip();
-
                         Packet packet = new Packet(bufferToNetwork);
                         if (packet.isUDP())
                         {
@@ -315,7 +301,7 @@ public class LocalVPNService extends VpnService
                     {
                         try
                         {
-                            Thread.sleep(10);
+                            Thread.sleep(50);
                         } catch (InterruptedException e)
                         {
                             e.printStackTrace();
@@ -332,4 +318,3 @@ public class LocalVPNService extends VpnService
         }
     }
 }
-

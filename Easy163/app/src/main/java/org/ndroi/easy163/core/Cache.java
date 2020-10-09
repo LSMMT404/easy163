@@ -1,17 +1,7 @@
 package org.ndroi.easy163.core;
 
-import android.util.Log;
-import org.ndroi.easy163.ui.MainActivity;
-import org.ndroi.easy163.utils.EasyLog;
 import org.ndroi.easy163.utils.Keyword;
-import org.ndroi.easy163.utils.ReadStream;
 import org.ndroi.easy163.utils.Song;
-import org.ndroi.easy163.vpn.LocalVPNService;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -22,27 +12,12 @@ public class Cache
         Object add(String id);
     }
 
-    private static abstract class DiskSaver
-    {
-        public abstract void load(Map<String, Object> items);
-        public abstract void update(String id, Object value);
-        public abstract void onCacheHit(String id, Object value);
-    }
-
     private Map<String, Object> items = new LinkedHashMap<>();
     private AddAction addAction;
-    private DiskSaver diskSaver = null;
 
     public Cache(AddAction addAction)
     {
         this.addAction = addAction;
-    }
-
-    public Cache(AddAction addAction, DiskSaver diskSaver)
-    {
-        this.addAction = addAction;
-        this.diskSaver = diskSaver;
-        diskSaver.load(items);
     }
 
     public void add(String id, Object value)
@@ -50,10 +25,6 @@ public class Cache
         synchronized (items)
         {
             items.put(id, value);
-            if(diskSaver != null)
-            {
-                diskSaver.update(id, value);
-            }
         }
     }
 
@@ -64,10 +35,6 @@ public class Cache
             if (items.containsKey(id))
             {
                 Object value = items.get(id);
-                if(diskSaver != null)
-                {
-                    diskSaver.onCacheHit(id, value);
-                }
                 return value;
             }
             if (addAction == null)
@@ -89,7 +56,7 @@ public class Cache
     /* id --> ProviderSong */
     public static Cache providerSongs = null;
 
-    public static void Init()
+    public static void init()
     {
         neteaseKeywords = new Cache(new AddAction()
         {
@@ -105,13 +72,18 @@ public class Cache
             @Override
             public Object add(String id)
             {
+                Song song = Local.get(id);
+                if(song != null)
+                {
+                    return song;
+                }
                 Keyword keyword = (Keyword) neteaseKeywords.get(id);
                 return Search.search(keyword);
             }
         });
     }
 
-    public static void Clear()
+    public static void clear()
     {
         providerSongs.items.clear();
     }
